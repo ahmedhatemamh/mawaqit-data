@@ -146,12 +146,8 @@ def save_state(path, state):
         f.write("\n")
 
 
-def _prev_key(year, month):
-    return (year - 1, 12) if month == 1 else (year, month - 1)
-
-
-def _next_key(year, month):
-    return (year + 1, 1) if month == 12 else (year, month + 1)
+def _month_index(year, month):
+    return year * 12 + month - 1
 
 
 def _index(state):
@@ -190,20 +186,33 @@ def apply_observation(state, obs, today):
     else:
         rec = {"year": obs.year, "month": obs.month, "start": start.isoformat(),
                "length": None, "sources": [SOURCE_NAME]}
-        prev = months.get(_prev_key(*key))
+        idx = _month_index(*key)
+        earlier = [m for m in state["months"] if _month_index(m["year"], m["month"]) < idx]
+        later = [m for m in state["months"] if _month_index(m["year"], m["month"]) > idx]
+        prev = max(earlier, key=lambda m: _month_index(m["year"], m["month"])) if earlier else None
+        nxt = min(later, key=lambda m: _month_index(m["year"], m["month"])) if later else None
+        prev_length = nxt_length = None
         if prev is not None:
-            length = (start - dt.date.fromisoformat(prev["start"])).days
-            if length not in (29, 30):
-                raise DataError("month %d-%02d would last %d days" % (prev["year"], prev["month"], length))
-            if prev["length"] not in (None, length):
-                raise DataError("month %d-%02d length changed" % (prev["year"], prev["month"]))
-            prev["length"] = length
-        nxt = months.get(_next_key(*key))
+            n = idx - _month_index(prev["year"], prev["month"])
+            days = (start - dt.date.fromisoformat(prev["start"])).days
+            if not 29 * n <= days <= 30 * n:
+                raise DataError("%d month(s) from %d-%02d to %d-%02d cannot last %d days"
+                                % (n, prev["year"], prev["month"], obs.year, obs.month, days))
+            if n == 1:
+                if prev["length"] not in (None, days):
+                    raise DataError("month %d-%02d length changed" % (prev["year"], prev["month"]))
+                prev_length = days
         if nxt is not None:
-            length = (dt.date.fromisoformat(nxt["start"]) - start).days
-            if length not in (29, 30):
-                raise DataError("month %d-%02d would last %d days" % (obs.year, obs.month, length))
-            rec["length"] = length
+            n = _month_index(nxt["year"], nxt["month"]) - idx
+            days = (dt.date.fromisoformat(nxt["start"]) - start).days
+            if not 29 * n <= days <= 30 * n:
+                raise DataError("%d month(s) from %d-%02d to %d-%02d cannot last %d days"
+                                % (n, obs.year, obs.month, nxt["year"], nxt["month"], days))
+            if n == 1:
+                nxt_length = days
+        if prev_length is not None:
+            prev["length"] = prev_length
+        rec["length"] = nxt_length
         state["months"].append(rec)
         state["months"].sort(key=lambda m: (m["year"], m["month"]))
     latest = state.get("latest")

@@ -15,6 +15,7 @@ on:
 permissions:
   contents: write
   issues: write
+  pages: write
 
 concurrency:
   group: hijri
@@ -23,7 +24,7 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -41,16 +42,44 @@ jobs:
           python scripts/hijri_update.py --state docs/hijri.json $args
 
       - name: Publish if changed
+        id: publish
         run: |
           if git diff --quiet -- docs/hijri.json; then
             echo "no change"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add docs/hijri.json
             git commit -m "data: update Hijri month starts from Dar al-Ifta"
             git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
+
+      # A push made with GITHUB_TOKEN may not start a Pages build, so ask for one explicitly,
+      # then check that the served file really is the one we just committed.
+      - name: Request a Pages build
+        if: steps.publish.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --method POST "repos/${{ github.repository }}/pages/builds"
+
+      - name: Verify the served file
+        if: steps.publish.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base=$(gh api "repos/${{ github.repository }}/pages" --jq .html_url)
+          url="${base%/}/hijri.json"
+          for i in $(seq 1 30); do
+            if curl -fsS "$url" | cmp -s - docs/hijri.json; then
+              echo "served file matches: $url"
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "the served file at $url is still not the committed one after 10 minutes" >&2
+          exit 1
 
       - name: Open an issue for Ahmed on failure
         if: failure()

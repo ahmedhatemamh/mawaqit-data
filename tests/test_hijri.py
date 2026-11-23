@@ -170,10 +170,46 @@ class StateTests(unittest.TestCase):
 
     def test_missed_months_do_not_invent_lengths(self):
         state = self.seeded()
-        start = D(2027, 2, 1)
+        start = D(2027, 2, 7)  # three months after 1448-06 (2026-11-11): 88 days
         lib.apply_observation(state, obs(start, 1448, 9, 1), start)
         self.assertIsNone(state["months"][0]["length"])
+        self.assertIsNone(state["months"][1]["length"])
         self.assertEqual(len(state["months"]), 2)
+
+    def test_gap_of_several_months_is_checked_against_29_30_day_bounds(self):
+        base = D(2026, 11, 11)
+        for days, ok in ((86, False), (87, True), (90, True), (91, False), (82, False)):
+            with self.subTest(days=days):
+                state = self.seeded()
+                start = base + dt.timedelta(days=days)
+                if ok:
+                    lib.apply_observation(state, obs(start, 1448, 9, 1), start)
+                else:
+                    with self.assertRaises(lib.DataError):
+                        lib.apply_observation(state, obs(start, 1448, 9, 1), start)
+                    self.assertEqual(len(state["months"]), 1)
+
+    def test_gap_is_also_checked_against_the_next_recorded_month(self):
+        late = D(2027, 2, 7)  # 1448-09; no earlier month is recorded
+        for start, ok in ((D(2026, 12, 9), True), (D(2026, 12, 10), True), (D(2026, 12, 1), False), (D(2026, 12, 20), False)):
+            with self.subTest(start=start):
+                state = lib.empty_state()
+                lib.apply_observation(state, obs(late, 1448, 9, 1), late)
+                if ok:
+                    lib.apply_observation(state, obs(start, 1448, 7, 1), start)
+                    self.assertEqual(len(state["months"]), 2)
+                else:
+                    with self.assertRaises(lib.DataError):
+                        lib.apply_observation(state, obs(start, 1448, 7, 1), start)
+                    self.assertEqual(len(state["months"]), 1)
+
+    def test_failed_validation_leaves_state_untouched(self):
+        state = self.seeded()
+        snapshot = json.dumps(state, sort_keys=True)
+        start = D(2026, 11, 11) + dt.timedelta(days=45)
+        with self.assertRaises(lib.DataError):
+            lib.apply_observation(state, obs(start, 1448, 7, 1), start)
+        self.assertEqual(json.dumps(state, sort_keys=True), snapshot)
 
     def test_state_file_round_trip_and_bad_files(self):
         with tempfile.TemporaryDirectory() as tmp:
