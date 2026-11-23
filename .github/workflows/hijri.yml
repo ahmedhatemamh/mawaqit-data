@@ -35,7 +35,15 @@ jobs:
       - name: Tests
         run: python -I -m unittest discover -s tests
 
-      - name: Update docs/hijri.json
+      # The official statements run first: both scripts decide from the state's latest observation,
+      # and the page-header update below moves it.
+      - name: Record new official moon-sighting statements
+        run: |
+          args=""
+          if [ "${{ inputs.force }}" = "true" ]; then args="--force"; fi
+          python scripts/bayan_update.py --state docs/hijri.json $args
+
+      - name: Update docs/hijri.json from the page header
         run: |
           args=""
           if [ "${{ inputs.force }}" = "true" ]; then args="--force"; fi

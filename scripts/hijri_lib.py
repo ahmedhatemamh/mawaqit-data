@@ -171,50 +171,64 @@ def should_fetch(state, today):
     return True, "counted day %d is inside the check window" % expected
 
 
+def insert_month(state, year, month, start, source):
+    """Record that Hijri month (year, month) starts on the date `start`, as reported by `source`.
+
+    Checks the spacing against the nearest recorded months on both sides (29..30 days per month,
+    also across gaps) and keeps adjacent lengths consistent. A different start for a month that is
+    already recorded is a conflict. Returns nothing; raises DataError and leaves state unchanged
+    in the bad cases.
+    """
+    months = _index(state)
+    key = (year, month)
+    if key in months:
+        rec = months[key]
+        if dt.date.fromisoformat(rec["start"]) != start:
+            raise DataError("conflict: month %d-%02d starts %s, %s says %s"
+                            % (year, month, rec["start"], source, start))
+        if source not in rec["sources"]:
+            rec["sources"] = sorted(rec["sources"] + [source])
+        return
+    rec = {"year": year, "month": month, "start": start.isoformat(),
+           "length": None, "sources": [source]}
+    idx = _month_index(*key)
+    earlier = [m for m in state["months"] if _month_index(m["year"], m["month"]) < idx]
+    later = [m for m in state["months"] if _month_index(m["year"], m["month"]) > idx]
+    prev = max(earlier, key=lambda m: _month_index(m["year"], m["month"])) if earlier else None
+    nxt = min(later, key=lambda m: _month_index(m["year"], m["month"])) if later else None
+    prev_length = nxt_length = None
+    if prev is not None:
+        n = idx - _month_index(prev["year"], prev["month"])
+        days = (start - dt.date.fromisoformat(prev["start"])).days
+        if not 29 * n <= days <= 30 * n:
+            raise DataError("%d month(s) from %d-%02d to %d-%02d cannot last %d days"
+                            % (n, prev["year"], prev["month"], year, month, days))
+        if n == 1:
+            if prev["length"] not in (None, days):
+                raise DataError("month %d-%02d length changed" % (prev["year"], prev["month"]))
+            prev_length = days
+    if nxt is not None:
+        n = _month_index(nxt["year"], nxt["month"]) - idx
+        days = (dt.date.fromisoformat(nxt["start"]) - start).days
+        if not 29 * n <= days <= 30 * n:
+            raise DataError("%d month(s) from %d-%02d to %d-%02d cannot last %d days"
+                            % (n, year, month, nxt["year"], nxt["month"], days))
+        if n == 1:
+            nxt_length = days
+    if prev_length is not None:
+        prev["length"] = prev_length
+    rec["length"] = nxt_length
+    state["months"].append(rec)
+    state["months"].sort(key=lambda m: (m["year"], m["month"]))
+
+
 def apply_observation(state, obs, today):
     """Merge one observation into state. Returns True if state changed."""
     if obs.greg != today:
         raise DataError("page date %s is not today (%s): stale page" % (obs.greg, today))
     start = obs.greg - dt.timedelta(days=obs.day - 1)
     before = json.dumps(state, sort_keys=True)
-    months = _index(state)
-    key = (obs.year, obs.month)
-    if key in months:
-        if dt.date.fromisoformat(months[key]["start"]) != start:
-            raise DataError("conflict: month %d-%02d starts %s, the page implies %s"
-                            % (obs.year, obs.month, months[key]["start"], start))
-    else:
-        rec = {"year": obs.year, "month": obs.month, "start": start.isoformat(),
-               "length": None, "sources": [SOURCE_NAME]}
-        idx = _month_index(*key)
-        earlier = [m for m in state["months"] if _month_index(m["year"], m["month"]) < idx]
-        later = [m for m in state["months"] if _month_index(m["year"], m["month"]) > idx]
-        prev = max(earlier, key=lambda m: _month_index(m["year"], m["month"])) if earlier else None
-        nxt = min(later, key=lambda m: _month_index(m["year"], m["month"])) if later else None
-        prev_length = nxt_length = None
-        if prev is not None:
-            n = idx - _month_index(prev["year"], prev["month"])
-            days = (start - dt.date.fromisoformat(prev["start"])).days
-            if not 29 * n <= days <= 30 * n:
-                raise DataError("%d month(s) from %d-%02d to %d-%02d cannot last %d days"
-                                % (n, prev["year"], prev["month"], obs.year, obs.month, days))
-            if n == 1:
-                if prev["length"] not in (None, days):
-                    raise DataError("month %d-%02d length changed" % (prev["year"], prev["month"]))
-                prev_length = days
-        if nxt is not None:
-            n = _month_index(nxt["year"], nxt["month"]) - idx
-            days = (dt.date.fromisoformat(nxt["start"]) - start).days
-            if not 29 * n <= days <= 30 * n:
-                raise DataError("%d month(s) from %d-%02d to %d-%02d cannot last %d days"
-                                % (n, obs.year, obs.month, nxt["year"], nxt["month"], days))
-            if n == 1:
-                nxt_length = days
-        if prev_length is not None:
-            prev["length"] = prev_length
-        rec["length"] = nxt_length
-        state["months"].append(rec)
-        state["months"].sort(key=lambda m: (m["year"], m["month"]))
+    insert_month(state, obs.year, obs.month, start, SOURCE_NAME)
     latest = state.get("latest")
     if not latest or dt.date.fromisoformat(latest["date"]) < obs.greg:
         state["latest"] = {"date": obs.greg.isoformat(), "year": obs.year, "month": obs.month, "day": obs.day}
