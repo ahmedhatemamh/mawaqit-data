@@ -103,7 +103,11 @@ def sync(state, fetch_url, fetch_sitemap, delay=lambda: None):
     the run so a person looks at it. Nothing is written when anything fails.
     """
     seen = set(state.get("bayan_ids", []))
-    todo = [(i, u) for i, u in list_statements(fetch_sitemap()) if i not in seen]
+    inventory = list_statements(fetch_sitemap())
+    if not inventory:
+        # The archive is never empty: an error page or a different sitemap layout must not look like "nothing new".
+        raise lib.DataError("the sitemap lists no moon-sighting statements: the site layout may have changed")
+    todo = [(i, u) for i, u in inventory if i not in seen]
     if not todo:
         return False
     work = copy.deepcopy(state)

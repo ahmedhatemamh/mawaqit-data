@@ -139,6 +139,18 @@ class SyncTests(unittest.TestCase):
             self.sync({10: statement(), 11: later}, ids=[10, 11])
         self.assertEqual(json.dumps(self.state, sort_keys=True), before)
 
+    def test_sitemap_without_statements_is_an_error_not_nothing_new(self):
+        self.sync({10: statement()})
+        before = json.dumps(self.state, sort_keys=True)
+        error_page = '<?xml version="1.0"?><error>maintenance</error>'
+        index = ('<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                 '<sitemap><loc>https://www.dar-alifta.org/ar/sitemap1.xml</loc></sitemap></sitemapindex>')
+        for body in (error_page, index, sitemap()):
+            with self.subTest(body[:40]):
+                with self.assertRaises(lib.DataError):
+                    bayan.sync(self.state, fetcher({}), lambda: body)
+        self.assertEqual(json.dumps(self.state, sort_keys=True), before)
+
     def test_fetch_failure_changes_nothing(self):
         before = json.dumps(self.state, sort_keys=True)
         with self.assertRaises(lib.DataError):
