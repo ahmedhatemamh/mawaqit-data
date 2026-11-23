@@ -1,0 +1,21 @@
+{
+ "latest": {
+  "date": "2026-11-23",
+  "day": 13,
+  "month": 6,
+  "year": 1448
+ },
+ "months": [
+  {
+   "length": null,
+   "month": 6,
+   "sources": [
+    "dar-alifta"
+   ],
+   "start": "2026-11-11",
+   "year": 1448
+  }
+ ],
+ "schema": 1,
+ "source": "https://www.dar-alifta.org/ar/prayer"
+}

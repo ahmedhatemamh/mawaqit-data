@@ -1,0 +1,93 @@
+name: hijri
+
+# Daily check. The script itself decides by counting days whether the site must be visited
+# (only around Hijri month boundaries), so most runs do nothing and change nothing.
+on:
+  schedule:
+    - cron: "20 4 * * *"   # 06:20 Cairo in winter, 07:20 in summer
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Check the site even in mid-month"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  issues: write
+  pages: write
+
+concurrency:
+  group: hijri
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Tests
+        run: python -I -m unittest discover -s tests
+
+      - name: Update docs/hijri.json
+        run: |
+          args=""
+          if [ "${{ inputs.force }}" = "true" ]; then args="--force"; fi
+          python scripts/hijri_update.py --state docs/hijri.json $args
+
+      - name: Commit the data if changed
+        run: |
+          if git diff --quiet -- docs/hijri.json; then
+            echo "no change"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add docs/hijri.json
+            git commit -m "data: update Hijri month starts from Dar al-Ifta"
+            git push
+          fi
+
+      # Independent of the commit above: a run that follows a failed earlier deployment has nothing
+      # to commit but must still repair it. A push made with GITHUB_TOKEN may not start a Pages build,
+      # so when the served file is not the committed one, ask for a build and wait for it.
+      - name: Make sure the served file is current
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base=$(gh api "repos/${{ github.repository }}/pages" --jq .html_url)
+          url="${base%/}/hijri.json"
+          if curl -fsS "$url" | cmp -s - docs/hijri.json; then
+            echo "served file already matches: $url"
+            exit 0
+          fi
+          gh api --method POST "repos/${{ github.repository }}/pages/builds"
+          for i in $(seq 1 30); do
+            sleep 20
+            if curl -fsS "$url" | cmp -s - docs/hijri.json; then
+              echo "served file matches after the build: $url"
+              exit 0
+            fi
+          done
+          echo "the served file at $url is still not the committed one after 10 minutes" >&2
+          exit 1
+
+      - name: Open an issue for Ahmed on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="تعذر تحديث التاريخ الهجري"
+          open=$(gh issue list --state open --search "in:title $title" --json number --jq length)
+          if [ "$open" = "0" ]; then
+            gh issue create --title "$title" --body "التحديث التلقائي للتاريخ الهجري فشل ولم يُنشر أي تغيير. التفاصيل: $RUN_URL
+          محتاج حل أو طريقة بديلة للوصول للتاريخ (مثلًا لو الموقع حجب GitHub أو غيّر شكل الصفحة)."
+          else
+            echo "an issue is already open"
+          fi
